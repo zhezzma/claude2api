@@ -3,6 +3,9 @@ name: Build and Push Docker Image
 on:  
   push:  
     branches: [ main, master ]  
+    paths-ignore:  
+      - '**/*.md'  
+      - 'docs/**'  
   pull_request:  
     branches: [ main, master ]  
   # 也可以手动触发  
