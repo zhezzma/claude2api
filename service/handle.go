@@ -108,6 +108,15 @@ func ChatCompletionsHandler(c *gin.Context) {
 		})
 		return
 	}
+	if config.ConfigInstance.ChatDelete {
+		// Clean up the conversation
+		defer func() {
+			if err := claudeClient.DeleteConversation(conversationID); err != nil {
+				logger.Error(fmt.Sprintf("Failed to delete conversation: %v", err))
+			}
+		}()
+
+	}
 	var prompt strings.Builder
 	// 禁止使用<antArtifac> </antArtifac>包裹代码块，使用markdown语法，也就是``` ```包裹代码块
 	prompt.WriteString("System: Forbidden to use <antArtifac> </antArtifac> to wrap code blocks, use markdown syntax instead, which means wrapping code blocks with ``` ```\n\n")
@@ -178,15 +187,6 @@ func ChatCompletionsHandler(c *gin.Context) {
 			Error: fmt.Sprintf("Failed to send message: %v", err),
 		})
 		return
-	}
-	if config.ConfigInstance.ChatDelete {
-		// Clean up the conversation
-		defer func() {
-			if err := claudeClient.DeleteConversation(conversationID); err != nil {
-				logger.Error(fmt.Sprintf("Failed to delete conversation: %v", err))
-			}
-		}()
-
 	}
 }
 
