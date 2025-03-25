@@ -26,5 +26,6 @@ func AuthMiddleware() gin.HandlerFunc {
 		c.JSON(401, gin.H{
 			"error": "Missing or invalid Authorization header",
 		})
+		c.Abort()
 	}
 }
