@@ -1,6 +1,6 @@
 # Claude2Api
-将Claude 的网页服务转为 Api 服务，支持识图，文件上传，流式传输……
-# Claude2API
+Transform Claude's web service into an API service, supporting image recognition, file upload, streaming transmission, thought output... 
+The API supports access in the OpenAI format.
 
 [![Go Report Card](https://goreportcard.com/badge/github.com/yushangxiao/claude2api)](https://goreportcard.com/report/github.com/yushangxiao/claude2api)
 [![License](https://img.shields.io/github/license/yushangxiao/claude2api)](LICENSE)
