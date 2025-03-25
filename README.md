@@ -4,7 +4,7 @@
 
 [![Go Report Card](https://goreportcard.com/badge/github.com/yushangxiao/claude2api)](https://goreportcard.com/report/github.com/yushangxiao/claude2api)
 [![License](https://img.shields.io/github/license/yushangxiao/claude2api)](LICENSE)
-|[中文]([https://github.com/yushangxiao/claude2api/edit/main/README.md](https://github.com/yushangxiao/claude2api/blob/main/docs/chinses.md))
+|![中文](https://github.com/yushangxiao/claude2api/blob/main/docs/chinses.md)
 
 ## ✨ Features
 
