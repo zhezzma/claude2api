@@ -1,5 +1,5 @@
 # Claude2Api
-Transform Claude's web service into an API service, supporting image recognition, file upload, streaming transmission, thought output... 
+Transform Claude's web service into an API service, supporting image recognition, file upload, streaming transmission, thing output... 
 The API supports access in the OpenAI format.
 
 [![Go Report Card](https://goreportcard.com/badge/github.com/yushangxiao/claude2api)](https://goreportcard.com/report/github.com/yushangxiao/claude2api)
