@@ -1,6 +1,7 @@
 package config
 
 import (
+	"claude2api/logger"
 	"fmt"
 	"math/rand"
 	"os"
@@ -29,6 +30,7 @@ type Config struct {
 	Proxy                string
 	ChatDelete           bool
 	MaxChatHistoryLength int
+	RetryCount           int
 }
 
 // 初始化随机数生成器
@@ -37,14 +39,13 @@ func init() {
 }
 
 // 解析 SESSION 格式的环境变量
-func parseSessionEnv(envValue string) []SessionInfo {
+func parseSessionEnv(envValue string) (int, []SessionInfo) {
 	if envValue == "" {
-		return []SessionInfo{}
+		return 0, []SessionInfo{}
 	}
-
 	var sessions []SessionInfo
 	sessionPairs := strings.Split(envValue, ",")
-
+	retryCount := len(sessionPairs) // 重试次数等于 session 数量
 	for _, pair := range sessionPairs {
 		parts := strings.Split(pair, ":")
 		session := SessionInfo{
@@ -59,8 +60,8 @@ func parseSessionEnv(envValue string) []SessionInfo {
 
 		sessions = append(sessions, session)
 	}
-
-	return sessions
+	logger.Info(fmt.Sprintf("Sessions count: %d", retryCount))
+	return retryCount, sessions
 }
 
 // 根据模型选择合适的 session
@@ -99,9 +100,10 @@ func LoadConfig() *Config {
 	if err != nil {
 		maxChatHistoryLength = 10000 // 默认值
 	}
+	retryCount, sessions := parseSessionEnv(os.Getenv("SESSIONS"))
 	config := &Config{
 		// 解析 SESSIONS 环境变量
-		Sessions: parseSessionEnv(os.Getenv("SESSIONS")),
+		Sessions: sessions,
 		// 设置服务地址，默认为 "0.0.0.0:8080"
 		Address: os.Getenv("ADDRESS"),
 
@@ -113,6 +115,8 @@ func LoadConfig() *Config {
 		ChatDelete: true,
 		// 设置最大聊天历史长度
 		MaxChatHistoryLength: maxChatHistoryLength,
+		// 设置重试次数
+		RetryCount: retryCount,
 	}
 
 	// 如果地址为空，使用默认值

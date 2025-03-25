@@ -46,8 +46,10 @@ type Delta struct {
 	Content string `json:"content"`
 }
 type Message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role       string        `json:"role"`
+	Content    string        `json:"content"`
+	refusal    interface{}   `json:"refusal"`
+	annotation []interface{} `json:"annotation"`
 }
 
 type OpenAIResponse struct {
@@ -56,6 +58,12 @@ type OpenAIResponse struct {
 	Created int64            `json:"created"`
 	Model   string           `json:"model"`
 	Choices []NoStreamChoice `json:"choices"`
+	Usage   Usage            `json:"usage"`
+}
+type Usage struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens"`
 }
 
 type Client struct {
@@ -205,10 +213,10 @@ func (c *Client) CreateConversation(model string) (string, error) {
 	return uuid, nil
 }
 
-// SendMessage sends a message to a conversation and returns the response
-func (c *Client) SendMessage(conversationID string, message string, stream bool, gc *gin.Context) error {
+// SendMessage sends a message to a conversation and returns the status and response
+func (c *Client) SendMessage(conversationID string, message string, stream bool, gc *gin.Context) (int, error) {
 	if c.orgID == "" {
-		return errors.New("organization ID not set")
+		return 500, errors.New("organization ID not set")
 	}
 	url := fmt.Sprintf("https://claude.ai/api/organizations/%s/chat_conversations/%s/completion",
 		c.orgID, conversationID)
@@ -225,13 +233,16 @@ func (c *Client) SendMessage(conversationID string, message string, stream bool,
 		SetBody(requestBody).
 		Post(url)
 	if err != nil {
-		return fmt.Errorf("request failed: %w", err)
+		return 500, fmt.Errorf("request failed: %w", err)
 	}
 	logger.Info(fmt.Sprintf("Claude response status code: %d", resp.StatusCode))
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return http.StatusTooManyRequests, fmt.Errorf("rate limit exceeded")
 	}
-	return c.HandleResponse(resp.Body, stream, gc)
+	if resp.StatusCode != http.StatusOK {
+		return resp.StatusCode, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+	return 200, c.HandleResponse(resp.Body, stream, gc)
 }
 
 // HandleResponse converts Claude's SSE format to OpenAI format and writes to the response writer
@@ -246,6 +257,10 @@ func (c *Client) HandleResponse(body io.ReadCloser, stream bool, gc *gin.Context
 		// 发送200状态码
 		gc.Writer.WriteHeader(http.StatusOK)
 		gc.Writer.Flush()
+	} else {
+		gc.Writer.Header().Set("Content-Type", "application/json")
+		gc.Writer.Header().Set("Cache-Control", "no-cache")
+		gc.Writer.Header().Set("Connection", "keep-alive")
 	}
 	scanner := bufio.NewScanner(body)
 	// Keep track of the full response for the final message
@@ -257,7 +272,7 @@ func (c *Client) HandleResponse(body io.ReadCloser, stream bool, gc *gin.Context
 		if line == "" {
 			continue
 		}
-		logger.Info(fmt.Sprintf("Claude SSE line: %s", line))
+		// logger.Info(fmt.Sprintf("Claude SSE line: %s", line))
 		// Claude SSE lines start with "data: "
 		if !strings.HasPrefix(line, "data: ") {
 			continue
@@ -296,8 +311,9 @@ func (c *Client) HandleResponse(body io.ReadCloser, stream bool, gc *gin.Context
 				}
 
 				// 发送数据
-				gc.Writer.Write(jsonBytes) // 换行符, 让客户端容易解析
+				gc.Writer.Write(jsonBytes)
 				gc.Writer.Flush()
+				return nil
 			}
 			if event.Delta.Type == "text_delta" && event.Delta.Text != "" {
 				res_text := event.Delta.Text
@@ -379,7 +395,6 @@ func (c *Client) HandleResponse(body io.ReadCloser, stream bool, gc *gin.Context
 				// 发送数据
 				gc.Writer.Write(jsonBytes)
 				gc.Writer.Flush()
-				continue
 			}
 		}
 	}
@@ -399,15 +414,27 @@ func (c *Client) HandleResponse(body io.ReadCloser, stream bool, gc *gin.Context
 				{
 					Index: 0,
 					Message: Message{
-						Role:    "assistant",
-						Content: res_all_text,
+						Role:       "assistant",
+						Content:    res_all_text,
+						refusal:    nil,
+						annotation: []interface{}{},
 					},
 					Logprobs:     nil,
 					FinishReason: "stop",
 				},
 			},
+			Usage: Usage{
+				PromptTokens:     0,
+				CompletionTokens: len(res_all_text),
+				TotalTokens:      len(res_all_text),
+			},
 		}
-		gc.JSON(http.StatusOK, openAIResp)
+		jsonBytes, err := json.Marshal(openAIResp)
+		if err != nil {
+			logger.Error(fmt.Sprintf("Error NoStream marshalling JSON: %v", err))
+		}
+		gc.Writer.Write(jsonBytes)
+		gc.Writer.Flush()
 	} else {
 		// 发送结束标志
 		gc.Writer.Write([]byte("data: [DONE]\n\n"))

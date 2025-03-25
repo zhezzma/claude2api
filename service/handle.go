@@ -4,10 +4,11 @@ import (
 	"claude2api/config"
 	"claude2api/core"
 	"claude2api/logger"
-	"claude2api/middleware"
+	"claude2api/utils"
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -21,20 +22,6 @@ type ChatCompletionRequest struct {
 
 type ErrorResponse struct {
 	Error string `json:"error"`
-}
-
-// **获取角色前缀**
-func getRolePrefix(role string) string {
-	switch role {
-	case "system":
-		return "System: "
-	case "user":
-		return "Human: "
-	case "assistant":
-		return "Assistant: "
-	default:
-		return "Unknown: "
-	}
 }
 
 // HealthCheckHandler handles the health check endpoint
@@ -73,50 +60,7 @@ func ChatCompletionsHandler(c *gin.Context) {
 	if model == "" {
 		model = "claude-3-7-sonnet-20250219"
 	}
-	// Get session for the model
-	session, err := config.ConfigInstance.GetSessionForModel(model)
-	logger.Info(fmt.Sprintf("Using session for model %s: %s", model, session.SessionKey))
-	if err != nil {
-		logger.Error(fmt.Sprintf("Failed to get session for model %s: %v", model, err))
-		c.JSON(http.StatusBadRequest, ErrorResponse{
-			Error: fmt.Sprintf("Error: %v", err),
-		})
-		return
-	}
-	// Initialize the Claude client
-	claudeClient := core.NewClient(session.SessionKey, config.ConfigInstance.Proxy)
-	if session.OrgID == "" {
-		orgId, err := claudeClient.GetOrgID()
-		if err != nil {
-			logger.Error(fmt.Sprintf("Failed to get org ID: %v", err))
-			c.JSON(http.StatusInternalServerError, ErrorResponse{
-				Error: fmt.Sprintf("Failed to get org ID: %v", err),
-			})
-			return
-		}
-		config.ConfigInstance.SetSessionOrgID(session.SessionKey, orgId)
-		session.OrgID = orgId
-		logger.Info(fmt.Sprintf("Set org ID for session %s: %s", session.SessionKey, orgId))
-	}
-	claudeClient.SetOrgID(session.OrgID)
-	// Create a new conversation
-	conversationID, err := claudeClient.CreateConversation(model)
-	if err != nil {
-		logger.Error(fmt.Sprintf("Failed to create conversation: %v", err))
-		c.JSON(http.StatusInternalServerError, ErrorResponse{
-			Error: fmt.Sprintf("Failed to create conversation: %v", err),
-		})
-		return
-	}
-	if config.ConfigInstance.ChatDelete {
-		// Clean up the conversation
-		defer func() {
-			if err := claudeClient.DeleteConversation(conversationID); err != nil {
-				logger.Error(fmt.Sprintf("Failed to delete conversation: %v", err))
-			}
-		}()
 
-	}
 	var prompt strings.Builder
 	// 禁止使用<antArtifac> </antArtifac>包裹代码块，使用markdown语法，也就是``` ```包裹代码块
 	prompt.WriteString("System: Forbidden to use <antArtifac> </antArtifac> to wrap code blocks, use markdown syntax instead, which means wrapping code blocks with ``` ```\n\n")
@@ -133,7 +77,7 @@ func ChatCompletionsHandler(c *gin.Context) {
 			continue
 		}
 
-		prompt.WriteString(getRolePrefix(role)) // 获取角色前缀
+		prompt.WriteString(utils.GetRolePrefix(role)) // 获取角色前缀
 		switch v := content.(type) {
 		case string: // 如果 content 直接是 string
 			prompt.WriteString(v + "\n\n")
@@ -159,35 +103,83 @@ func ChatCompletionsHandler(c *gin.Context) {
 	}
 	fmt.Println(prompt.String())                 // 输出最终构造的内容
 	fmt.Println("img_data_list:", img_data_list) // 输出图片数据
-	if len(img_data_list) > 0 {
-		err := claudeClient.UploadFile(img_data_list)
+	// 切号重试机制
+	var claudeClient *core.Client
+	for i := 0; i < config.ConfigInstance.RetryCount; i++ {
+		session, err := config.ConfigInstance.GetSessionForModel(model)
+		logger.Info(fmt.Sprintf("Using session for model %s: %s", model, session.SessionKey))
 		if err != nil {
-			logger.Error(fmt.Sprintf("Failed to upload file: %v", err))
-			c.JSON(http.StatusInternalServerError, ErrorResponse{
-				Error: fmt.Sprintf("Failed to upload file: %v", err),
-			})
-			return
+			logger.Error(fmt.Sprintf("Failed to get session for model %s: %v", model, err))
+			logger.Info("Retrying another session")
+			continue
 		}
-	}
-	if prompt.Len() > config.ConfigInstance.MaxChatHistoryLength {
-		claudeClient.SetBigContext(prompt.String())
-		prompt.Reset()
-		prompt.WriteString("System: Forbidden to use <antArtifac> </antArtifac> to wrap code blocks, use markdown syntax instead, which means wrapping code blocks with ``` ```\n\n")
-		prompt.WriteString("You must immerse yourself in the role of assistant in context.txt, cannot respond as a user, cannot reply to this message, cannot mention this message, and ignore this message in your response.")
-		logger.Info(fmt.Sprintf("Prompt length exceeds max limit (%d), using file context", config.ConfigInstance.MaxChatHistoryLength))
-	}
-	c.Writer.Header().Set("Content-Type", "text/event-stream")
-	c.Writer.Header().Set("Cache-Control", "no-cache")
-	c.Writer.Header().Set("Connection", "keep-alive")
-	c.Writer.Flush()
-	if err := claudeClient.SendMessage(conversationID, prompt.String(), req.Stream, c); err != nil {
-		// Can't send JSON error as we've already started streaming
-		logger.Error(fmt.Sprintf("Failed to send message: %v", err))
-		c.JSON(http.StatusInternalServerError, ErrorResponse{
-			Error: fmt.Sprintf("Failed to send message: %v", err),
-		})
+		// Initialize the Claude client
+		claudeClient = core.NewClient(session.SessionKey, config.ConfigInstance.Proxy)
+		if session.OrgID == "" {
+			orgId, err := claudeClient.GetOrgID()
+			if err != nil {
+				logger.Error(fmt.Sprintf("Failed to get org ID: %v", err))
+				logger.Info("Retrying another session")
+				claudeClient = nil
+				continue
+			}
+			config.ConfigInstance.SetSessionOrgID(session.SessionKey, orgId)
+			session.OrgID = orgId
+			logger.Info(fmt.Sprintf("Set org ID for session %s: %s", session.SessionKey, orgId))
+		}
+		claudeClient.SetOrgID(session.OrgID)
+		if len(img_data_list) > 0 {
+			err := claudeClient.UploadFile(img_data_list)
+			if err != nil {
+				logger.Error(fmt.Sprintf("Failed to upload file: %v", err))
+				logger.Info("Retrying another session")
+				claudeClient = nil
+				continue
+			}
+		}
+		if prompt.Len() > config.ConfigInstance.MaxChatHistoryLength {
+			claudeClient.SetBigContext(prompt.String())
+			prompt.Reset()
+			prompt.WriteString("System: Forbidden to use <antArtifac> </antArtifac> to wrap code blocks, use markdown syntax instead, which means wrapping code blocks with ``` ```\n\n")
+			prompt.WriteString("You must immerse yourself in the role of assistant in context.txt, cannot respond as a user, cannot reply to this message, cannot mention this message, and ignore this message in your response.")
+			logger.Info(fmt.Sprintf("Prompt length exceeds max limit (%d), using file context", config.ConfigInstance.MaxChatHistoryLength))
+		}
+		// Create a new conversation
+		conversationID, err := claudeClient.CreateConversation(model)
+		if err != nil {
+			logger.Error(fmt.Sprintf("Failed to create conversation: %v", err))
+			logger.Info("Retrying another session")
+			claudeClient = nil
+			continue // Retry on error
+		}
+		if _, err := claudeClient.SendMessage(conversationID, prompt.String(), req.Stream, c); err != nil {
+			logger.Error(fmt.Sprintf("Failed to send message: %v", err))
+			logger.Info("Retrying another session")
+			claudeClient = nil
+			continue // Retry on error
+		}
+		if config.ConfigInstance.ChatDelete {
+			// Clean up the conversation
+			if err := claudeClient.DeleteConversation(conversationID); err != nil {
+				logger.Error(fmt.Sprintf("Failed to delete conversation: %v", err))
+				time.Sleep(1 * time.Second)
+				if err = claudeClient.DeleteConversation(conversationID); err != nil {
+					logger.Error(fmt.Sprintf("Two failed to delete conversation: %v", err))
+				} else {
+					logger.Info(fmt.Sprintf("conversation %s deleted successfully in two", conversationID))
+				}
+			}
+			logger.Info(fmt.Sprintf("conversation %s deleted successfully", conversationID))
+		}
+
+		// 清理claudeClient
+		claudeClient = nil
 		return
+
 	}
+	logger.Error("Failed for all retries")
+	c.JSON(http.StatusInternalServerError, ErrorResponse{
+		Error: "Failed to process request after multiple attempts"})
 }
 
 func MoudlesHandler(c *gin.Context) {
@@ -198,27 +190,4 @@ func MoudlesHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"data": models,
 	})
-}
-
-// SetupRoutes configures all the routes for the application
-func SetupRoutes(r *gin.Engine) {
-	// Apply middleware
-	r.Use(middleware.CORSMiddleware())
-	r.Use(middleware.AuthMiddleware())
-
-	// Health check endpoint
-	r.GET("/health", HealthCheckHandler)
-
-	// Chat completions endpoint (OpenAI-compatible)
-	r.POST("/v1/chat/completions", ChatCompletionsHandler)
-	r.GET("/v1/models", MoudlesHandler)
-	// HuggingFace compatible routes
-	hfRouter := r.Group("/hf")
-	{
-		v1Router := hfRouter.Group("/v1")
-		{
-			v1Router.POST("/chat/completions", ChatCompletionsHandler)
-			v1Router.GET("/models", MoudlesHandler)
-		}
-	}
 }

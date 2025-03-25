@@ -2,7 +2,7 @@ package main
 
 import (
 	"claude2api/config"
-	"claude2api/service"
+	"claude2api/router"
 
 	"github.com/gin-gonic/gin"
 )
@@ -12,7 +12,7 @@ func main() {
 	// Load configuration
 
 	// Setup all routes
-	service.SetupRoutes(r)
+	router.SetupRoutes(r)
 
 	// Run the server on 0.0.0.0:8080
 	r.Run(config.ConfigInstance.Address)
