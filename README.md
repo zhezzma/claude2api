@@ -16,6 +16,7 @@ The API supports access in the OpenAI format.
 - 🔄 **Chat History Management** - Control the length of conversation context , exceeding will upload file
 - 🌐 **Proxy Support** - Route requests through your preferred proxy
 - 🔐 **API Key Authentication** - Secure your API endpoints
+- 🔁 Automatic Retry - Feature to automatically retry requests when request fail
 
 ## 📋 Prerequisites
 
