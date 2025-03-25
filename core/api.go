@@ -17,6 +17,47 @@ import (
 	"github.com/imroc/req/v3"
 )
 
+// OpenAISrteamResponse 定义 OpenAI 的流式响应结构
+type OpenAISrteamResponse struct {
+	ID      string         `json:"id"`
+	Object  string         `json:"object"`
+	Created int64          `json:"created"`
+	Model   string         `json:"model"`
+	Choices []StreamChoice `json:"choices"`
+}
+
+// Choice 结构表示 OpenAI 返回的单个选项
+type StreamChoice struct {
+	Index        int         `json:"index"`
+	Delta        Delta       `json:"delta"`
+	Logprobs     interface{} `json:"logprobs"`
+	FinishReason interface{} `json:"finish_reason"`
+}
+
+type NoStreamChoice struct {
+	Index        int         `json:"index"`
+	Message      Message     `json:"message"`
+	Logprobs     interface{} `json:"logprobs"`
+	FinishReason string      `json:"finish_reason"`
+}
+
+// Delta 结构用于存储返回的文本内容
+type Delta struct {
+	Content string `json:"content"`
+}
+type Message struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+type OpenAIResponse struct {
+	ID      string           `json:"id"`
+	Object  string           `json:"object"`
+	Created int64            `json:"created"`
+	Model   string           `json:"model"`
+	Choices []NoStreamChoice `json:"choices"`
+}
+
 type Client struct {
 	sessionKey   string
 	orgID        string
@@ -202,6 +243,9 @@ func (c *Client) HandleResponse(body io.ReadCloser, stream bool, gc *gin.Context
 		gc.Writer.Header().Set("Content-Type", "text/event-stream")
 		gc.Writer.Header().Set("Cache-Control", "no-cache")
 		gc.Writer.Header().Set("Connection", "keep-alive")
+		// 发送200状态码
+		gc.Writer.WriteHeader(http.StatusOK)
+		gc.Writer.Flush()
 	}
 	scanner := bufio.NewScanner(body)
 	// Keep track of the full response for the final message
@@ -213,6 +257,7 @@ func (c *Client) HandleResponse(body io.ReadCloser, stream bool, gc *gin.Context
 		if line == "" {
 			continue
 		}
+		logger.Info(fmt.Sprintf("Claude SSE line: %s", line))
 		// Claude SSE lines start with "data: "
 		if !strings.HasPrefix(line, "data: ") {
 			continue
@@ -225,24 +270,34 @@ func (c *Client) HandleResponse(body io.ReadCloser, stream bool, gc *gin.Context
 			// Handle text_delta events
 			if event.Type == "error" && event.Error.Message != "" {
 				// Create OpenAI format response for error
-				openAIResp := map[string]interface{}{
-					"id":      uuid.New().String(),
-					"object":  "chat.completion.chunk",
-					"created": time.Now().Unix(),
-					"model":   "claude-3-7-sonnet-20250219",
-					"choices": []map[string]interface{}{
+				openAIResp := &OpenAISrteamResponse{
+					ID:      uuid.New().String(),
+					Object:  "chat.completion.chunk",
+					Created: time.Now().Unix(),
+					Model:   "claude-3-7-sonnet-20250219",
+					Choices: []StreamChoice{
 						{
-							"index": 0,
-							"delta": map[string]interface{}{
-								"content": event.Error.Message,
+							Index: 0,
+							Delta: Delta{
+								Content: event.Error.Message,
 							},
-							"finish_reason": nil,
+							Logprobs:     nil,
+							FinishReason: nil,
 						},
 					},
 				}
-				gc.SSEvent("data", openAIResp)
+				jsonBytes, err := json.Marshal(openAIResp)
+				// 加上data: 前缀
+				jsonBytes = append([]byte("data: "), jsonBytes...)
+				jsonBytes = append(jsonBytes, []byte("\n\n")...)
+				if err != nil {
+					logger.Error(fmt.Sprintf("Error marshalling JSON: %v", err))
+					return err
+				}
+
+				// 发送数据
+				gc.Writer.Write(jsonBytes) // 换行符, 让客户端容易解析
 				gc.Writer.Flush()
-				continue
 			}
 			if event.Delta.Type == "text_delta" && event.Delta.Text != "" {
 				res_text := event.Delta.Text
@@ -255,23 +310,33 @@ func (c *Client) HandleResponse(body io.ReadCloser, stream bool, gc *gin.Context
 				if !stream {
 					continue
 				}
-				openAIResp := map[string]interface{}{
-					"id":      uuid.New().String(),
-					"object":  "chat.completion.chunk",
-					"created": time.Now().Unix(),
-					"model":   "claude-3-7-sonnet-20250219",
-					"choices": []map[string]interface{}{
+				openAIResp := &OpenAISrteamResponse{
+					ID:      uuid.New().String(),
+					Object:  "chat.completion.chunk",
+					Created: time.Now().Unix(),
+					Model:   "claude-3-7-sonnet-20250219",
+					Choices: []StreamChoice{
 						{
-							"index": 0,
-							"delta": map[string]interface{}{
-								"content": res_text,
+							Index: 0,
+							Delta: Delta{
+								Content: res_text,
 							},
-							"finish_reason": nil,
+							Logprobs:     nil,
+							FinishReason: nil,
 						},
 					},
 				}
-				// 返回openAIResp
-				gc.SSEvent("data", openAIResp)
+
+				jsonBytes, err := json.Marshal(openAIResp)
+				jsonBytes = append([]byte("data: "), jsonBytes...)
+				jsonBytes = append(jsonBytes, []byte("\n\n")...)
+				if err != nil {
+					logger.Error(fmt.Sprintf("Error marshalling JSON: %v", err))
+					return err
+				}
+
+				// 发送数据
+				gc.Writer.Write(jsonBytes)
 				gc.Writer.Flush()
 				continue
 			}
@@ -287,22 +352,32 @@ func (c *Client) HandleResponse(body io.ReadCloser, stream bool, gc *gin.Context
 					continue
 				}
 				// Create OpenAI format response for thinking notification
-				openAIResp := map[string]interface{}{
-					"id":      uuid.New().String(),
-					"object":  "chat.completion.chunk",
-					"created": time.Now().Unix(),
-					"model":   "claude-3-7-sonnet-20250219",
-					"choices": []map[string]interface{}{
+				openAIResp := &OpenAISrteamResponse{
+					ID:      uuid.New().String(),
+					Object:  "chat.completion.chunk",
+					Created: time.Now().Unix(),
+					Model:   "claude-3-7-sonnet-20250219",
+					Choices: []StreamChoice{
 						{
-							"index": 0,
-							"delta": map[string]interface{}{
-								"content": res_text,
+							Index: 0,
+							Delta: Delta{
+								Content: res_text,
 							},
-							"finish_reason": nil,
+							Logprobs:     nil,
+							FinishReason: nil,
 						},
 					},
 				}
-				gc.SSEvent("data", openAIResp)
+				jsonBytes, err := json.Marshal(openAIResp)
+				jsonBytes = append([]byte("data: "), jsonBytes...)
+				jsonBytes = append(jsonBytes, []byte("\n\n")...)
+				if err != nil {
+					logger.Error(fmt.Sprintf("Error marshalling JSON: %v", err))
+					return err
+				}
+
+				// 发送数据
+				gc.Writer.Write(jsonBytes)
 				gc.Writer.Flush()
 				continue
 			}
@@ -315,24 +390,30 @@ func (c *Client) HandleResponse(body io.ReadCloser, stream bool, gc *gin.Context
 		gc.Writer.Header().Set("Content-Type", "application/json")
 		gc.Writer.Header().Set("Cache-Control", "no-cache")
 		// Create final response with all text
-		openAIResp := map[string]interface{}{
-			"id":      uuid.New().String(),
-			"object":  "chat.completion",
-			"created": time.Now().Unix(),
-			"model":   "claude-3-7-sonnet-20250219",
-			"choices": []map[string]interface{}{
+		openAIResp := &OpenAIResponse{
+			ID:      uuid.New().String(),
+			Object:  "chat.completion",
+			Created: time.Now().Unix(),
+			Model:   "claude-3-7-sonnet-20250219",
+			Choices: []NoStreamChoice{
 				{
-					"index": 0,
-					"message": map[string]interface{}{
-						"content": res_all_text,
-						"role":    "assistant",
+					Index: 0,
+					Message: Message{
+						Role:    "assistant",
+						Content: res_all_text,
 					},
-					"finish_reason": "stop",
+					Logprobs:     nil,
+					FinishReason: "stop",
 				},
 			},
 		}
 		gc.JSON(http.StatusOK, openAIResp)
+	} else {
+		// 发送结束标志
+		gc.Writer.Write([]byte("data: [DONE]\n\n"))
+		gc.Writer.Flush()
 	}
+
 	return nil
 }
 
