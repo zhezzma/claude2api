@@ -168,8 +168,9 @@ func ChatCompletionsHandler(c *gin.Context) {
 				} else {
 					logger.Info(fmt.Sprintf("conversation %s deleted successfully in two", conversationID))
 				}
+			} else {
+				logger.Info(fmt.Sprintf("conversation %s deleted successfully", conversationID))
 			}
-			logger.Info(fmt.Sprintf("conversation %s deleted successfully", conversationID))
 		}
 
 		// 清理claudeClient
