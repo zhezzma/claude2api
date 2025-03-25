@@ -1,5 +1,7 @@
 # Claude2Api
-将Claude的网页服务转为Api服务，支持识图，文件上传，流式传输……
+将Claude的网页服务转为Api服务，支持识图，文件上传，流式传输, 思考输出……
+
+Api支持访问格式为 openai 格式
 
 # Claude2API
 [![Go Report Card](https://goreportcard.com/badge/github.com/yushangxiao/claude2api)](https://goreportcard.com/report/github.com/yushangxiao/claude2api)
