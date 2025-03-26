@@ -24,18 +24,15 @@ type SessionRagen struct {
 }
 
 type Config struct {
-	Sessions             []SessionInfo
-	Address              string
-	APIKey               string
-	Proxy                string
-	ChatDelete           bool
-	MaxChatHistoryLength int
-	RetryCount           int
-}
-
-// 初始化随机数生成器
-func init() {
-	rand.Seed(time.Now().UnixNano())
+	Sessions               []SessionInfo
+	Address                string
+	APIKey                 string
+	Proxy                  string
+	ChatDelete             bool
+	MaxChatHistoryLength   int
+	RetryCount             int
+	NoRolePrefix           bool
+	PromptDisableArtifacts bool
 }
 
 // 解析 SESSION 格式的环境变量
@@ -60,7 +57,6 @@ func parseSessionEnv(envValue string) (int, []SessionInfo) {
 
 		sessions = append(sessions, session)
 	}
-	logger.Info(fmt.Sprintf("Sessions count: %d", retryCount))
 	return retryCount, sessions
 }
 
@@ -112,21 +108,21 @@ func LoadConfig() *Config {
 		// 设置代理地址
 		Proxy: os.Getenv("PROXY"),
 		//自动删除聊天
-		ChatDelete: true,
+		ChatDelete: os.Getenv("CHAT_DELETE") != "false",
 		// 设置最大聊天历史长度
 		MaxChatHistoryLength: maxChatHistoryLength,
 		// 设置重试次数
 		RetryCount: retryCount,
+		// 设置是否使用角色前缀
+		NoRolePrefix: os.Getenv("NO_ROLE_PREFIX") == "true",
+		// 设置是否使用提示词禁用artifacts
+		PromptDisableArtifacts: os.Getenv("PROMPT_DISABLE_ARTIFACTS") == "true",
 	}
 
 	// 如果地址为空，使用默认值
 	if config.Address == "" {
 		config.Address = "0.0.0.0:8080"
 	}
-	if os.Getenv("CHAT_DELETE") == "false" {
-		config.ChatDelete = false
-	}
-
 	return config
 }
 
@@ -134,15 +130,24 @@ var ConfigInstance *Config
 var Sr *SessionRagen
 
 func init() {
+	rand.Seed(time.Now().UnixNano())
 	// 加载环境变量
-	err := godotenv.Load()
+	_ = godotenv.Load()
 	Sr = &SessionRagen{
 		index: 0,
 		mutex: sync.Mutex{},
 	}
-	if err != nil {
-		fmt.Println("Error loading .env file")
-	}
 	ConfigInstance = LoadConfig()
-	fmt.Println("Loaded config:", ConfigInstance)
+	logger.Info("Loaded config:")
+	logger.Info(fmt.Sprintf("Sessions count: %d", ConfigInstance.RetryCount))
+	for _, session := range ConfigInstance.Sessions {
+		logger.Info(fmt.Sprintf("Session: %s, OrgID: %s", session.SessionKey, session.OrgID))
+	}
+	logger.Info(fmt.Sprintf("Address: %s", ConfigInstance.Address))
+	logger.Info(fmt.Sprintf("APIKey: %s", ConfigInstance.APIKey))
+	logger.Info(fmt.Sprintf("Proxy: %s", ConfigInstance.Proxy))
+	logger.Info(fmt.Sprintf("ChatDelete: %t", ConfigInstance.ChatDelete))
+	logger.Info(fmt.Sprintf("MaxChatHistoryLength: %d", ConfigInstance.MaxChatHistoryLength))
+	logger.Info(fmt.Sprintf("NoRolePrefix: %t", ConfigInstance.NoRolePrefix))
+	logger.Info(fmt.Sprintf("PromptDisableArtifacts: %t", ConfigInstance.PromptDisableArtifacts))
 }

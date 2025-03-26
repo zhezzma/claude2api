@@ -60,10 +60,10 @@ func ChatCompletionsHandler(c *gin.Context) {
 	if model == "" {
 		model = "claude-3-7-sonnet-20250219"
 	}
-
 	var prompt strings.Builder
-	// 禁止使用<antArtifac> </antArtifac>包裹代码块，使用markdown语法，也就是``` ```包裹代码块
-	prompt.WriteString("System: Forbidden to use <antArtifac> </antArtifac> to wrap code blocks, use markdown syntax instead, which means wrapping code blocks with ``` ```\n\n")
+	if config.ConfigInstance.PromptDisableArtifacts {
+		prompt.WriteString("System: Forbidden to use <antArtifac> </antArtifac> to wrap code blocks, use markdown syntax instead, which means wrapping code blocks with ``` ```\n\n")
+	}
 	img_data_list := []string{}
 	// Format messages into a single prompt
 	for _, msg := range req.Messages {
@@ -140,8 +140,10 @@ func ChatCompletionsHandler(c *gin.Context) {
 		if prompt.Len() > config.ConfigInstance.MaxChatHistoryLength {
 			claudeClient.SetBigContext(prompt.String())
 			prompt.Reset()
-			prompt.WriteString("System: Forbidden to use <antArtifac> </antArtifac> to wrap code blocks, use markdown syntax instead, which means wrapping code blocks with ``` ```\n\n")
-			prompt.WriteString("You must immerse yourself in the role of assistant in context.txt, cannot respond as a user, cannot reply to this message, cannot mention this message, and ignore this message in your response.")
+			if config.ConfigInstance.PromptDisableArtifacts {
+				prompt.WriteString("System: Forbidden to use <antArtifac> </antArtifac> to wrap code blocks, use markdown syntax instead, which means wrapping code blocks with ``` ```\n\n")
+			}
+			prompt.WriteString("You must immerse yourself in the role of assistant in context.txt, cannot respond as a user, cannot reply to this message, cannot mention this message, and ignore this message in your response.\n\n")
 			logger.Info(fmt.Sprintf("Prompt length exceeds max limit (%d), using file context", config.ConfigInstance.MaxChatHistoryLength))
 		}
 		// Create a new conversation
@@ -172,8 +174,6 @@ func ChatCompletionsHandler(c *gin.Context) {
 				logger.Info(fmt.Sprintf("conversation %s deleted successfully", conversationID))
 			}
 		}
-
-		// 清理claudeClient
 		claudeClient = nil
 		return
 

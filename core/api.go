@@ -89,7 +89,8 @@ type ResponseEvent struct {
 
 // NewClient creates a new Claude API client
 func NewClient(sessionKey string, proxy string) *Client {
-	client := req.C().ImpersonateChrome()
+	client := req.C().ImpersonateChrome().SetTimeout(time.Minute * 5)
+	client.Transport.SetResponseHeaderTimeout(time.Second * 10)
 	if proxy != "" {
 		client.SetProxyURL(proxy)
 	}
@@ -203,6 +204,7 @@ func (c *Client) CreateConversation(model string) (string, error) {
 		return "", fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 	var result map[string]interface{}
+	// logger.Info(fmt.Sprintf("create conversation response: %s", resp.String()))
 	if err := json.Unmarshal(resp.Bytes(), &result); err != nil {
 		return "", fmt.Errorf("failed to parse response: %w", err)
 	}
@@ -279,6 +281,7 @@ func (c *Client) HandleResponse(body io.ReadCloser, stream bool, gc *gin.Context
 		}
 		// Extract the data part
 		data := line[6:]
+		// logger.Info(fmt.Sprintf("Claude SSE data: %s", data))
 		// Try to parse as ResponseEvent first
 		var event ResponseEvent
 		if err := json.Unmarshal([]byte(data), &event); err == nil {
