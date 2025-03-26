@@ -34,6 +34,8 @@ docker run -d \
   -e APIKEY=123 \
   -e CHAT_DELETE=true \
   -e MAX_CHAT_HISTORY_LENGTH=10000 \
+  -e NO_ROLE_PREFIX=false \
+  -e PROMPT_DISABLE_ARTIFACTS=false \
   --name claude2api \
   ghcr.io/yushangxiao/claude2api:latest
 ```
@@ -57,6 +59,8 @@ services:
       - PROXY=http://proxy:2080  # Optional
       - CHAT_DELETE=true
       - MAX_CHAT_HISTORY_LENGTH=10000
+      - NO_ROLE_PREFIX=false
+      - PROMPT_DISABLE_ARTIFACTS=true
     restart: unless-stopped
     
 ```
@@ -90,8 +94,8 @@ go build -o claude2api .
 export SESSIONS=sk-ant-sid01-xxxx,sk-ant-sid01-yyyy
 export ADDRESS=0.0.0.0:8080
 export APIKEY=123
-export CHAT_DELETE=true
-export MAX_CHAT_HISTORY_LENGTH=10000
+……
+
 ./claude2api
 ```
 
@@ -105,6 +109,9 @@ export MAX_CHAT_HISTORY_LENGTH=10000
 | `PROXY` | HTTP proxy URL | Optional |
 | `CHAT_DELETE` | Whether to delete chat sessions after use | `true` |
 | `MAX_CHAT_HISTORY_LENGTH` | Exceeding will text to file | `10000` |
+| `NO_ROLE_PREFIX` | Do not add role in every message | `false` |
+| `PROMPT_DISABLE_ARTIFACTS` | Add Prompt try to disable Artifacts | `false` |
+
 
 ## 📝 API Usage
 
