@@ -31,6 +31,8 @@ Api支持访问格式为 openai 格式
    -e APIKEY=123 \
    -e CHAT_DELETE=true \
    -e MAX_CHAT_HISTORY_LENGTH=10000 \
+   -e NO_ROLE_PREFIX=false \
+   -e PROMPT_DISABLE_ARTIFACTS=false \
    --name claude2api \
    ghcr.io/yushangxiao/claude2api:latest
  ```
@@ -52,6 +54,8 @@ Api支持访问格式为 openai 格式
        - PROXY=http://proxy:2080  # 可选
        - CHAT_DELETE=true
        - MAX_CHAT_HISTORY_LENGTH=10000
+       - NO_ROLE_PREFIX=false
+       - PROMPT_DISABLE_ARTIFACTS=true
      restart: unless-stopped
  ```
  然后运行：
@@ -78,8 +82,8 @@ Api支持访问格式为 openai 格式
  export SESSIONS=sk-ant-sid01-xxxx,sk-ant-sid01-yyyy
  export ADDRESS=0.0.0.0:8080
  export APIKEY=123
- export CHAT_DELETE=true
- export MAX_CHAT_HISTORY_LENGTH=10000
+ ……
+
  ./claude2api
  ```
  
@@ -92,6 +96,8 @@ Api支持访问格式为 openai 格式
  | `PROXY` | HTTP代理URL | 可选 |
  | `CHAT_DELETE` | 是否在使用后删除聊天会话 | `true` |
  | `MAX_CHAT_HISTORY_LENGTH` | 超出此长度将文本转为文件 | `10000` |
+ | `NO_ROLE_PREFIX` |不在每条消息前添加角色 | `false` |
+ | `PROMPT_DISABLE_ARTIFACTS` | 添加提示词尝试禁用 ARTIFACTS| `false` |
  
  ## 📝 API使用
  ### 认证
