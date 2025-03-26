@@ -123,7 +123,7 @@ func LoadConfig() *Config {
 	if config.Address == "" {
 		config.Address = "0.0.0.0:8080"
 	}
-	if os.Getenv("ChAT_DELETE") == "false" {
+	if os.Getenv("CHAT_DELETE") == "false" {
 		config.ChatDelete = false
 	}
 
