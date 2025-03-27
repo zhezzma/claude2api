@@ -1,6 +1,7 @@
 package router
 
 import (
+	"claude2api/config"
 	"claude2api/middleware"
 	"claude2api/service"
 
@@ -18,6 +19,12 @@ func SetupRoutes(r *gin.Engine) {
 	// Chat completions endpoint (OpenAI-compatible)
 	r.POST("/v1/chat/completions", service.ChatCompletionsHandler)
 	r.GET("/v1/models", service.MoudlesHandler)
+
+	if config.ConfigInstance.EnableMirrorApi {
+		r.POST(config.ConfigInstance.MirrorApiPrefix+"/v1/chat/completions", service.MirrorChatHandler)
+		r.GET(config.ConfigInstance.MirrorApiPrefix+"/v1/models", service.MoudlesHandler)
+	}
+
 	// HuggingFace compatible routes
 	hfRouter := r.Group("/hf")
 	{

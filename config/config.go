@@ -33,6 +33,8 @@ type Config struct {
 	RetryCount             int
 	NoRolePrefix           bool
 	PromptDisableArtifacts bool
+	EnableMirrorApi        bool
+	MirrorApiPrefix        string
 }
 
 // 解析 SESSION 格式的环境变量
@@ -117,6 +119,10 @@ func LoadConfig() *Config {
 		NoRolePrefix: os.Getenv("NO_ROLE_PREFIX") == "true",
 		// 设置是否使用提示词禁用artifacts
 		PromptDisableArtifacts: os.Getenv("PROMPT_DISABLE_ARTIFACTS") == "true",
+		// 设置是否启用镜像API
+		EnableMirrorApi: os.Getenv("ENABLE_MIRROR_API") == "true",
+		// 设置镜像API前缀
+		MirrorApiPrefix: os.Getenv("MIRROR_API_PREFIX"),
 	}
 
 	// 如果地址为空，使用默认值
@@ -150,4 +156,6 @@ func init() {
 	logger.Info(fmt.Sprintf("MaxChatHistoryLength: %d", ConfigInstance.MaxChatHistoryLength))
 	logger.Info(fmt.Sprintf("NoRolePrefix: %t", ConfigInstance.NoRolePrefix))
 	logger.Info(fmt.Sprintf("PromptDisableArtifacts: %t", ConfigInstance.PromptDisableArtifacts))
+	logger.Info(fmt.Sprintf("EnableMirrorApi: %t", ConfigInstance.EnableMirrorApi))
+	logger.Info(fmt.Sprintf("MirrorApiPrefix: %s", ConfigInstance.MirrorApiPrefix))
 }
