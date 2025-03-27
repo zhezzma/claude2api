@@ -17,6 +17,7 @@ The API supports access in the OpenAI format.
 - 🌐 **Proxy Support** - Route requests through your preferred proxy
 - 🔐 **API Key Authentication** - Secure your API endpoints
 - 🔁 **Automatic Retry** - Feature to automatically retry requests when request fail
+- 🌐 **Direct Proxy** -let sk-ant-sid01* as key to use
 
 ## 📋 Prerequisites
 
@@ -36,6 +37,8 @@ docker run -d \
   -e MAX_CHAT_HISTORY_LENGTH=10000 \
   -e NO_ROLE_PREFIX=false \
   -e PROMPT_DISABLE_ARTIFACTS=false \
+  -e ENABLE_MIRROR_API=false \
+  -e MIRROR_API_PREFIX=/mirror \
   --name claude2api \
   ghcr.io/yushangxiao/claude2api:latest
 ```
@@ -61,6 +64,8 @@ services:
       - MAX_CHAT_HISTORY_LENGTH=10000
       - NO_ROLE_PREFIX=false
       - PROMPT_DISABLE_ARTIFACTS=true
+      - ENABLE_MIRROR_API=false
+      - MIRROR_API_PREFIX=/mirror
     restart: unless-stopped
     
 ```
@@ -111,6 +116,8 @@ export APIKEY=123
 | `MAX_CHAT_HISTORY_LENGTH` | Exceeding will text to file | `10000` |
 | `NO_ROLE_PREFIX` | Do not add role in every message | `false` |
 | `PROMPT_DISABLE_ARTIFACTS` | Add Prompt try to disable Artifacts | `false` |
+| `ENABLE_MIRROR_API` | Enable direct use sk-ant-* as key | `false` |
+| `PROMPT_DISABLE_ARTIFACTS` | Add Prefix to protect Mirror| `false` |
 
 
 ## 📝 API Usage
