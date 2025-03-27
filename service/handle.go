@@ -33,7 +33,11 @@ func HealthCheckHandler(c *gin.Context) {
 
 // ChatCompletionsHandler handles the chat completions endpoint
 func ChatCompletionsHandler(c *gin.Context) {
-
+	useMirror, exist := c.Get("UseMirrorApi")
+	if exist && useMirror.(bool) {
+		MirrorChatHandler(c)
+		return
+	}
 	// Parse request body
 	var req ChatCompletionRequest
 	defaultStream := true
