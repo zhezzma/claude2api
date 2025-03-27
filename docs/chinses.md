@@ -15,9 +15,10 @@ Api支持访问格式为 openai 格式
 - 📁 **文件上传支持** - 上传长文本内容
 - 🧠 **思考过程** - 访问Claude的逐步推理，自动输出`<think>`标签
  - 🔄 **聊天历史管理** - 控制对话上下文长度，超出将上传为文件
- - 🌐 **代理支持** - 通过您首选的代理路由请求
+ - 🌐 **代理支持** - 通过您首选的代理请求
  - 🔐 **API密钥认证** - 保护您的API端点
  - 🔁 **自动重试** - 请求失败时，自动切换下一个账号
+  - 🌐 **直接代理** -  使用 sk-ant-* 直接作为key使用
  ## 📋 前提条件
  - Go 1.23+（从源代码构建）
  - Docker（用于容器化部署）
@@ -33,6 +34,8 @@ Api支持访问格式为 openai 格式
    -e MAX_CHAT_HISTORY_LENGTH=10000 \
    -e NO_ROLE_PREFIX=false \
    -e PROMPT_DISABLE_ARTIFACTS=false \
+   -e ENABLE_MIRROR_API=false \
+   -e MIRROR_API_PREFIX=/mirror \
    --name claude2api \
    ghcr.io/yushangxiao/claude2api:latest
  ```
@@ -56,6 +59,8 @@ Api支持访问格式为 openai 格式
        - MAX_CHAT_HISTORY_LENGTH=10000
        - NO_ROLE_PREFIX=false
        - PROMPT_DISABLE_ARTIFACTS=true
+       - ENABLE_MIRROR_API=false
+       - MIRROR_API_PREFIX=/mirror
      restart: unless-stopped
  ```
  然后运行：
@@ -98,6 +103,8 @@ Api支持访问格式为 openai 格式
  | `MAX_CHAT_HISTORY_LENGTH` | 超出此长度将文本转为文件 | `10000` |
  | `NO_ROLE_PREFIX` |不在每条消息前添加角色 | `false` |
  | `PROMPT_DISABLE_ARTIFACTS` | 添加提示词尝试禁用 ARTIFACTS| `false` |
+ | `ENABLE_MIRROR_API` | 允许直接使用 sk-ant-* 作为 key 使用 | `false` |
+ | `MIRROR_API_PREFIX` | 对直接使用增加接口前缀 | `` |
  
  ## 📝 API使用
  ### 认证
