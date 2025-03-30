@@ -86,6 +86,7 @@ func (c *Config) GetSessionForModel(model string) (SessionInfo, error) {
 func (c *Config) SetSessionOrgID(sessionKey, orgID string) {
 	for i, session := range c.Sessions {
 		if session.SessionKey == sessionKey {
+			logger.Info(fmt.Sprintf("Setting OrgID for session %s to %s", sessionKey, orgID))
 			c.Sessions[i].OrgID = orgID
 			return
 		}

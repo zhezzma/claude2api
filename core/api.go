@@ -3,6 +3,7 @@ package core
 import (
 	"bufio"
 	"claude2api/logger"
+	"claude2api/model"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -17,63 +18,13 @@ import (
 	"github.com/imroc/req/v3"
 )
 
-// OpenAISrteamResponse 定义 OpenAI 的流式响应结构
-type OpenAISrteamResponse struct {
-	ID      string         `json:"id"`
-	Object  string         `json:"object"`
-	Created int64          `json:"created"`
-	Model   string         `json:"model"`
-	Choices []StreamChoice `json:"choices"`
-}
-
-// Choice 结构表示 OpenAI 返回的单个选项
-type StreamChoice struct {
-	Index        int         `json:"index"`
-	Delta        Delta       `json:"delta"`
-	Logprobs     interface{} `json:"logprobs"`
-	FinishReason interface{} `json:"finish_reason"`
-}
-
-type NoStreamChoice struct {
-	Index        int         `json:"index"`
-	Message      Message     `json:"message"`
-	Logprobs     interface{} `json:"logprobs"`
-	FinishReason string      `json:"finish_reason"`
-}
-
-// Delta 结构用于存储返回的文本内容
-type Delta struct {
-	Content string `json:"content"`
-}
-type Message struct {
-	Role       string        `json:"role"`
-	Content    string        `json:"content"`
-	refusal    interface{}   `json:"refusal"`
-	annotation []interface{} `json:"annotation"`
-}
-
-type OpenAIResponse struct {
-	ID      string           `json:"id"`
-	Object  string           `json:"object"`
-	Created int64            `json:"created"`
-	Model   string           `json:"model"`
-	Choices []NoStreamChoice `json:"choices"`
-	Usage   Usage            `json:"usage"`
-}
-type Usage struct {
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
-	TotalTokens      int `json:"total_tokens"`
-}
-
 type Client struct {
-	sessionKey   string
+	SessionKey   string
 	orgID        string
 	client       *req.Client
 	defaultAttrs map[string]interface{}
 }
 
-// {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" 你好！很"}      }
 type ResponseEvent struct {
 	Type  string `json:"type"`
 	Index int    `json:"index"`
@@ -87,7 +38,6 @@ type ResponseEvent struct {
 	} `json:"error"`
 }
 
-// NewClient creates a new Claude API client
 func NewClient(sessionKey string, proxy string) *Client {
 	client := req.C().ImpersonateChrome().SetTimeout(time.Minute * 5)
 	client.Transport.SetResponseHeaderTimeout(time.Second * 10)
@@ -113,7 +63,7 @@ func NewClient(sessionKey string, proxy string) *Client {
 	})
 	// Create default client with session key
 	c := &Client{
-		sessionKey: sessionKey,
+		SessionKey: sessionKey,
 		client:     client,
 		defaultAttrs: map[string]interface{}{
 			"personalized_styles": []map[string]interface{}{
@@ -265,10 +215,19 @@ func (c *Client) HandleResponse(body io.ReadCloser, stream bool, gc *gin.Context
 		gc.Writer.Header().Set("Connection", "keep-alive")
 	}
 	scanner := bufio.NewScanner(body)
+	clientGone := gc.Request.Context().Done()
 	// Keep track of the full response for the final message
 	thinkingShown := false
 	res_all_text := ""
 	for scanner.Scan() {
+		select {
+		case <-clientGone:
+			// 客户端已断开连接，清理资源并退出
+			logger.Info("Client closed connection")
+			return nil
+		default:
+			// 继续处理响应
+		}
 		line := scanner.Text()
 		// Skip empty lines
 		if line == "" {
@@ -288,15 +247,15 @@ func (c *Client) HandleResponse(body io.ReadCloser, stream bool, gc *gin.Context
 			// Handle text_delta events
 			if event.Type == "error" && event.Error.Message != "" {
 				// Create OpenAI format response for error
-				openAIResp := &OpenAISrteamResponse{
+				openAIResp := &model.OpenAISrteamResponse{
 					ID:      uuid.New().String(),
 					Object:  "chat.completion.chunk",
 					Created: time.Now().Unix(),
 					Model:   "claude-3-7-sonnet-20250219",
-					Choices: []StreamChoice{
+					Choices: []model.StreamChoice{
 						{
 							Index: 0,
-							Delta: Delta{
+							Delta: model.Delta{
 								Content: event.Error.Message,
 							},
 							Logprobs:     nil,
@@ -329,15 +288,15 @@ func (c *Client) HandleResponse(body io.ReadCloser, stream bool, gc *gin.Context
 				if !stream {
 					continue
 				}
-				openAIResp := &OpenAISrteamResponse{
+				openAIResp := &model.OpenAISrteamResponse{
 					ID:      uuid.New().String(),
 					Object:  "chat.completion.chunk",
 					Created: time.Now().Unix(),
 					Model:   "claude-3-7-sonnet-20250219",
-					Choices: []StreamChoice{
+					Choices: []model.StreamChoice{
 						{
 							Index: 0,
-							Delta: Delta{
+							Delta: model.Delta{
 								Content: res_text,
 							},
 							Logprobs:     nil,
@@ -371,15 +330,15 @@ func (c *Client) HandleResponse(body io.ReadCloser, stream bool, gc *gin.Context
 					continue
 				}
 				// Create OpenAI format response for thinking notification
-				openAIResp := &OpenAISrteamResponse{
+				openAIResp := &model.OpenAISrteamResponse{
 					ID:      uuid.New().String(),
 					Object:  "chat.completion.chunk",
 					Created: time.Now().Unix(),
 					Model:   "claude-3-7-sonnet-20250219",
-					Choices: []StreamChoice{
+					Choices: []model.StreamChoice{
 						{
 							Index: 0,
-							Delta: Delta{
+							Delta: model.Delta{
 								Content: res_text,
 							},
 							Logprobs:     nil,
@@ -408,25 +367,25 @@ func (c *Client) HandleResponse(body io.ReadCloser, stream bool, gc *gin.Context
 		gc.Writer.Header().Set("Content-Type", "application/json")
 		gc.Writer.Header().Set("Cache-Control", "no-cache")
 		// Create final response with all text
-		openAIResp := &OpenAIResponse{
+		openAIResp := &model.OpenAIResponse{
 			ID:      uuid.New().String(),
 			Object:  "chat.completion",
 			Created: time.Now().Unix(),
 			Model:   "claude-3-7-sonnet-20250219",
-			Choices: []NoStreamChoice{
+			Choices: []model.NoStreamChoice{
 				{
 					Index: 0,
-					Message: Message{
+					Message: model.Message{
 						Role:       "assistant",
 						Content:    res_all_text,
-						refusal:    nil,
-						annotation: []interface{}{},
+						Refusal:    nil,
+						Annotation: []interface{}{},
 					},
 					Logprobs:     nil,
 					FinishReason: "stop",
 				},
 			},
-			Usage: Usage{
+			Usage: model.Usage{
 				PromptTokens:     0,
 				CompletionTokens: len(res_all_text),
 				TotalTokens:      len(res_all_text),
