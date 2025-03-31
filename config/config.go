@@ -19,8 +19,8 @@ type SessionInfo struct {
 }
 
 type SessionRagen struct {
-	index int
-	mutex sync.Mutex
+	Index int
+	Mutex sync.Mutex
 }
 
 type Config struct {
@@ -35,6 +35,7 @@ type Config struct {
 	PromptDisableArtifacts bool
 	EnableMirrorApi        bool
 	MirrorApiPrefix        string
+	RwMutx                 sync.RWMutex
 }
 
 // 解析 SESSION 格式的环境变量
@@ -59,31 +60,25 @@ func parseSessionEnv(envValue string) (int, []SessionInfo) {
 
 		sessions = append(sessions, session)
 	}
+	if retryCount > 5 {
+		retryCount = 5 // 限制最大重试次数为 5 次
+	}
 	return retryCount, sessions
 }
 
 // 根据模型选择合适的 session
-func (c *Config) GetSessionForModel(model string) (SessionInfo, error) {
-	allSessions := c.Sessions
-
-	// 如果没有可用的 session，返回空
-	if len(allSessions) == 0 {
-		return SessionInfo{}, fmt.Errorf("no sessions available for model %s", model)
+func (c *Config) GetSessionForModel(idx int) (SessionInfo, error) {
+	if len(c.Sessions) == 0 || idx < 0 || idx >= len(c.Sessions) {
+		return SessionInfo{}, fmt.Errorf("invalid session index: %d", idx)
 	}
-
-	// 如果只有一个 session，直接返回
-	if len(allSessions) == 1 {
-		return allSessions[0], nil
-	}
-	// 如果有多个 session，选择下一个
-	Sr.mutex.Lock()
-	defer Sr.mutex.Unlock()
-	session := allSessions[Sr.index]
-	Sr.index = (Sr.index + 1) % len(allSessions)
-	return session, nil
+	c.RwMutx.RLock()
+	defer c.RwMutx.RUnlock()
+	return c.Sessions[idx], nil
 }
 
 func (c *Config) SetSessionOrgID(sessionKey, orgID string) {
+	c.RwMutx.Lock()
+	defer c.RwMutx.Unlock()
 	for i, session := range c.Sessions {
 		if session.SessionKey == sessionKey {
 			logger.Info(fmt.Sprintf("Setting OrgID for session %s to %s", sessionKey, orgID))
@@ -91,6 +86,14 @@ func (c *Config) SetSessionOrgID(sessionKey, orgID string) {
 			return
 		}
 	}
+}
+func (sr *SessionRagen) NextIndex() int {
+	sr.Mutex.Lock()
+	defer sr.Mutex.Unlock()
+
+	index := sr.Index
+	sr.Index = (index + 1) % len(ConfigInstance.Sessions)
+	return index
 }
 
 // 从环境变量加载配置
@@ -124,6 +127,8 @@ func LoadConfig() *Config {
 		EnableMirrorApi: os.Getenv("ENABLE_MIRROR_API") == "true",
 		// 设置镜像API前缀
 		MirrorApiPrefix: os.Getenv("MIRROR_API_PREFIX"),
+		//设置读写锁
+		RwMutx: sync.RWMutex{},
 	}
 
 	// 如果地址为空，使用默认值
@@ -141,8 +146,8 @@ func init() {
 	// 加载环境变量
 	_ = godotenv.Load()
 	Sr = &SessionRagen{
-		index: 0,
-		mutex: sync.Mutex{},
+		Index: 0,
+		Mutex: sync.Mutex{},
 	}
 	ConfigInstance = LoadConfig()
 	logger.Info("Loaded config:")

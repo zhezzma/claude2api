@@ -48,10 +48,11 @@ func ChatCompletionsHandler(c *gin.Context) {
 
 	// Get model or use default
 	model := getModelOrDefault(req.Model)
-
+	index := config.Sr.NextIndex()
 	// Attempt with retry mechanism
 	for i := 0; i < config.ConfigInstance.RetryCount; i++ {
-		session, err := config.ConfigInstance.GetSessionForModel(model)
+		index = (index + 1) % len(config.ConfigInstance.Sessions)
+		session, err := config.ConfigInstance.GetSessionForModel(index)
 		if err != nil {
 			logger.Error(fmt.Sprintf("Failed to get session for model %s: %v", model, err))
 			logger.Info("Retrying another session")
