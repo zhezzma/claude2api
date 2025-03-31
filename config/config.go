@@ -47,6 +47,10 @@ func parseSessionEnv(envValue string) (int, []SessionInfo) {
 	sessionPairs := strings.Split(envValue, ",")
 	retryCount := len(sessionPairs) // 重试次数等于 session 数量
 	for _, pair := range sessionPairs {
+		if pair == "" {
+			retryCount--
+			continue
+		}
 		parts := strings.Split(pair, ":")
 		session := SessionInfo{
 			SessionKey: parts[0],
