@@ -214,13 +214,13 @@ func handleChatRequest(c *gin.Context, session config.SessionInfo, model string,
 	// Send message
 	if _, err := claudeClient.SendMessage(conversationID, processor.Prompt.String(), stream, c); err != nil {
 		logger.Error(fmt.Sprintf("Failed to send message: %v", err))
+		go cleanupConversation(claudeClient, conversationID, 3)
 		return false
 	}
 
 	// Clean up conversation if enabled
 	if config.ConfigInstance.ChatDelete {
-		retry := 3
-		go cleanupConversation(claudeClient, conversationID, retry)
+		go cleanupConversation(claudeClient, conversationID, 3)
 	}
 
 	return true
