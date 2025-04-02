@@ -110,9 +110,10 @@ func (c *Client) GetOrgID() (string, error) {
 		return "", fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 	type OrgResponse []struct {
-		ID   int    `json:"id"`
-		UUID string `json:"uuid"`
-		Name string `json:"name"`
+		ID            int    `json:"id"`
+		UUID          string `json:"uuid"`
+		Name          string `json:"name"`
+		RateLimitTier string `json:"rate_limit_tier"`
 	}
 
 	var orgs OrgResponse
@@ -122,7 +123,15 @@ func (c *Client) GetOrgID() (string, error) {
 	if len(orgs) == 0 {
 		return "", errors.New("no organizations found")
 	}
-	return orgs[0].UUID, nil
+	if len(orgs) == 1 {
+		return orgs[0].UUID, nil
+	}
+	for _, org := range orgs {
+		if org.RateLimitTier == "default_claude_ai" {
+			return org.UUID, nil
+		}
+	}
+	return "", errors.New("no default organization found")
 
 }
 
