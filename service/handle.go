@@ -60,7 +60,10 @@ func ChatCompletionsHandler(c *gin.Context) {
 		}
 
 		logger.Info(fmt.Sprintf("Using session for model %s: %s", model, session.SessionKey))
-
+		if i > 0 {
+			processor.Prompt.Reset()
+			processor.Prompt.WriteString(processor.RootPrompt.String())
+		}
 		// Initialize client and process request
 		if handleChatRequest(c, session, model, processor, req.Stream) {
 			return // Success, exit the retry loop
@@ -119,7 +122,12 @@ func MirrorChatHandler(c *gin.Context) {
 	}
 
 	// Process the request with the provided session
-	handleChatRequest(c, session, model, processor, req.Stream)
+	if !handleChatRequest(c, session, model, processor, req.Stream) {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{
+			Error: "Failed to process request",
+		})
+		return
+	}
 }
 
 // Helper functions

@@ -11,6 +11,7 @@ import (
 // ChatRequestProcessor handles common chat request processing logic
 type ChatRequestProcessor struct {
 	Prompt      strings.Builder
+	RootPrompt  strings.Builder
 	ImgDataList []string
 }
 
@@ -18,6 +19,7 @@ type ChatRequestProcessor struct {
 func NewChatRequestProcessor() *ChatRequestProcessor {
 	return &ChatRequestProcessor{
 		Prompt:      strings.Builder{},
+		RootPrompt:  strings.Builder{},
 		ImgDataList: []string{},
 	}
 }
@@ -64,7 +66,7 @@ func (p *ChatRequestProcessor) ProcessMessages(messages []map[string]interface{}
 			}
 		}
 	}
-
+	p.RootPrompt.WriteString(p.Prompt.String())
 	// Debug output
 	logger.Debug(fmt.Sprintf("Processed prompt: %s", p.Prompt.String()))
 	logger.Debug(fmt.Sprintf("Image data list: %v", p.ImgDataList))
