@@ -84,11 +84,12 @@ func NewClient(sessionKey string, proxy string) *Client {
 					"name": "web_search",
 				},
 			},
-			"attachments":    []interface{}{},
-			"files":          []interface{}{},
-			"sync_sources":   []interface{}{},
-			"rendering_mode": "messages",
-			"timezone":       "America/New_York",
+			"parent_message_uuid": "00000000-0000-4000-8000-000000000000",
+			"attachments":         []interface{}{},
+			"files":               []interface{}{},
+			"sync_sources":        []interface{}{},
+			"rendering_mode":      "messages",
+			"timezone":            "America/New_York",
 		},
 	}
 	return c
@@ -184,7 +185,6 @@ func (c *Client) SendMessage(conversationID string, message string, stream bool,
 	// Create request body with default attributes
 	requestBody := c.defaultAttrs
 	requestBody["prompt"] = message
-	requestBody["parent_message_uuid"] = "00000000-0000-4000-8000-000000000000"
 	// Set up streaming response
 	resp, err := c.client.R().DisableAutoReadResponse().
 		SetHeader("referer", fmt.Sprintf("https://claude.ai/chat/%s", conversationID)).
@@ -207,7 +207,6 @@ func (c *Client) SendMessage(conversationID string, message string, stream bool,
 }
 
 // HandleResponse converts Claude's SSE format to OpenAI format and writes to the response writer
-// HandleResponse converts Claude's SSE format to OpenAI format and writes to the response writer
 func (c *Client) HandleResponse(body io.ReadCloser, stream bool, gc *gin.Context) error {
 	defer body.Close()
 	// Set headers for streaming
@@ -218,19 +217,15 @@ func (c *Client) HandleResponse(body io.ReadCloser, stream bool, gc *gin.Context
 		// 发送200状态码
 		gc.Writer.WriteHeader(http.StatusOK)
 		gc.Writer.Flush()
-	} else {
-		gc.Writer.Header().Set("Content-Type", "application/json")
-		gc.Writer.Header().Set("Cache-Control", "no-cache")
-		gc.Writer.Header().Set("Connection", "keep-alive")
 	}
 	scanner := bufio.NewScanner(body)
-	clientGone := gc.Request.Context().Done()
+	clientDone := gc.Request.Context().Done()
 	// Keep track of the full response for the final message
 	thinkingShown := false
 	res_all_text := ""
 	for scanner.Scan() {
 		select {
-		case <-clientGone:
+		case <-clientDone:
 			// 客户端已断开连接，清理资源并退出
 			logger.Info("Client closed connection")
 			return nil
@@ -238,57 +233,19 @@ func (c *Client) HandleResponse(body io.ReadCloser, stream bool, gc *gin.Context
 			// 继续处理响应
 		}
 		line := scanner.Text()
-		// Skip empty lines
-		if line == "" {
-			continue
-		}
 		// logger.Info(fmt.Sprintf("Claude SSE line: %s", line))
-		// Claude SSE lines start with "data: "
 		if !strings.HasPrefix(line, "data: ") {
 			continue
 		}
-		// Extract the data part
 		data := line[6:]
-		// logger.Info(fmt.Sprintf("Claude SSE data: %s", data))
-		// Try to parse as ResponseEvent first
 		var event ResponseEvent
 		if err := json.Unmarshal([]byte(data), &event); err == nil {
-			// Handle text_delta events
 			if event.Type == "error" && event.Error.Message != "" {
-				// Create OpenAI format response for error
-				openAIResp := &model.OpenAISrteamResponse{
-					ID:      uuid.New().String(),
-					Object:  "chat.completion.chunk",
-					Created: time.Now().Unix(),
-					Model:   "claude-3-7-sonnet-20250219",
-					Choices: []model.StreamChoice{
-						{
-							Index: 0,
-							Delta: model.Delta{
-								Content: event.Error.Message,
-							},
-							Logprobs:     nil,
-							FinishReason: nil,
-						},
-					},
-				}
-				jsonBytes, err := json.Marshal(openAIResp)
-				// 加上data: 前缀
-				jsonBytes = append([]byte("data: "), jsonBytes...)
-				jsonBytes = append(jsonBytes, []byte("\n\n")...)
-				if err != nil {
-					logger.Error(fmt.Sprintf("Error marshalling JSON: %v", err))
-					return err
-				}
-
-				// 发送数据
-				gc.Writer.Write(jsonBytes)
-				gc.Writer.Flush()
+				model.ReturnOpenAIResponse(event.Error.Message, stream, gc)
 				return nil
 			}
 			if event.Delta.Type == "text_delta" && event.Delta.Text != "" {
 				res_text := event.Delta.Text
-				// Create OpenAI format response for text delta
 				if thinkingShown {
 					res_text = "</think>\n" + res_text
 					thinkingShown = false
@@ -297,37 +254,9 @@ func (c *Client) HandleResponse(body io.ReadCloser, stream bool, gc *gin.Context
 				if !stream {
 					continue
 				}
-				openAIResp := &model.OpenAISrteamResponse{
-					ID:      uuid.New().String(),
-					Object:  "chat.completion.chunk",
-					Created: time.Now().Unix(),
-					Model:   "claude-3-7-sonnet-20250219",
-					Choices: []model.StreamChoice{
-						{
-							Index: 0,
-							Delta: model.Delta{
-								Content: res_text,
-							},
-							Logprobs:     nil,
-							FinishReason: nil,
-						},
-					},
-				}
-
-				jsonBytes, err := json.Marshal(openAIResp)
-				jsonBytes = append([]byte("data: "), jsonBytes...)
-				jsonBytes = append(jsonBytes, []byte("\n\n")...)
-				if err != nil {
-					logger.Error(fmt.Sprintf("Error marshalling JSON: %v", err))
-					return err
-				}
-
-				// 发送数据
-				gc.Writer.Write(jsonBytes)
-				gc.Writer.Flush()
+				model.ReturnOpenAIResponse(res_text, stream, gc)
 				continue
 			}
-			// Handle thinking_delta events - only show once
 			if event.Delta.Type == "thinking_delta" {
 				res_text := event.Delta.THINKING
 				if !thinkingShown {
@@ -338,34 +267,8 @@ func (c *Client) HandleResponse(body io.ReadCloser, stream bool, gc *gin.Context
 				if !stream {
 					continue
 				}
-				// Create OpenAI format response for thinking notification
-				openAIResp := &model.OpenAISrteamResponse{
-					ID:      uuid.New().String(),
-					Object:  "chat.completion.chunk",
-					Created: time.Now().Unix(),
-					Model:   "claude-3-7-sonnet-20250219",
-					Choices: []model.StreamChoice{
-						{
-							Index: 0,
-							Delta: model.Delta{
-								Content: res_text,
-							},
-							Logprobs:     nil,
-							FinishReason: nil,
-						},
-					},
-				}
-				jsonBytes, err := json.Marshal(openAIResp)
-				jsonBytes = append([]byte("data: "), jsonBytes...)
-				jsonBytes = append(jsonBytes, []byte("\n\n")...)
-				if err != nil {
-					logger.Error(fmt.Sprintf("Error marshalling JSON: %v", err))
-					return err
-				}
-
-				// 发送数据
-				gc.Writer.Write(jsonBytes)
-				gc.Writer.Flush()
+				model.ReturnOpenAIResponse(res_text, stream, gc)
+				continue
 			}
 		}
 	}
@@ -373,39 +276,7 @@ func (c *Client) HandleResponse(body io.ReadCloser, stream bool, gc *gin.Context
 		return fmt.Errorf("error reading response: %w", err)
 	}
 	if !stream {
-		gc.Writer.Header().Set("Content-Type", "application/json")
-		gc.Writer.Header().Set("Cache-Control", "no-cache")
-		// Create final response with all text
-		openAIResp := &model.OpenAIResponse{
-			ID:      uuid.New().String(),
-			Object:  "chat.completion",
-			Created: time.Now().Unix(),
-			Model:   "claude-3-7-sonnet-20250219",
-			Choices: []model.NoStreamChoice{
-				{
-					Index: 0,
-					Message: model.Message{
-						Role:       "assistant",
-						Content:    res_all_text,
-						Refusal:    nil,
-						Annotation: []interface{}{},
-					},
-					Logprobs:     nil,
-					FinishReason: "stop",
-				},
-			},
-			Usage: model.Usage{
-				PromptTokens:     0,
-				CompletionTokens: len(res_all_text),
-				TotalTokens:      len(res_all_text),
-			},
-		}
-		jsonBytes, err := json.Marshal(openAIResp)
-		if err != nil {
-			logger.Error(fmt.Sprintf("Error NoStream marshalling JSON: %v", err))
-		}
-		gc.Writer.Write(jsonBytes)
-		gc.Writer.Flush()
+		model.ReturnOpenAIResponse(res_all_text, stream, gc)
 	} else {
 		// 发送结束标志
 		gc.Writer.Write([]byte("data: [DONE]\n\n"))

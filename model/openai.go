@@ -1,5 +1,15 @@
 package model
 
+import (
+	"claude2api/logger"
+	"encoding/json"
+	"fmt"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+)
+
 type ChatCompletionRequest struct {
 	Model    string                   `json:"model"`
 	Messages []map[string]interface{} `json:"messages"`
@@ -54,4 +64,67 @@ type Usage struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
 	TotalTokens      int `json:"total_tokens"`
+}
+
+func ReturnOpenAIResponse(text string, stream bool, gc *gin.Context) error {
+	if stream {
+		return streamRespose(text, gc)
+	} else {
+		return noStreamResponse(text, gc)
+	}
+}
+
+func streamRespose(text string, gc *gin.Context) error {
+	openAIResp := &OpenAISrteamResponse{
+		ID:      uuid.New().String(),
+		Object:  "chat.completion.chunk",
+		Created: time.Now().Unix(),
+		Model:   "claude-3-7-sonnet-20250219",
+		Choices: []StreamChoice{
+			{
+				Index: 0,
+				Delta: Delta{
+					Content: text,
+				},
+				Logprobs:     nil,
+				FinishReason: nil,
+			},
+		},
+	}
+
+	jsonBytes, err := json.Marshal(openAIResp)
+	jsonBytes = append([]byte("data: "), jsonBytes...)
+	jsonBytes = append(jsonBytes, []byte("\n\n")...)
+	if err != nil {
+		logger.Error(fmt.Sprintf("Error marshalling JSON: %v", err))
+		return err
+	}
+
+	// 发送数据
+	gc.Writer.Write(jsonBytes)
+	gc.Writer.Flush()
+	return nil
+}
+
+func noStreamResponse(text string, gc *gin.Context) error {
+	openAIResp := &OpenAIResponse{
+		ID:      uuid.New().String(),
+		Object:  "chat.completion",
+		Created: time.Now().Unix(),
+		Model:   "claude-3-7-sonnet-20250219",
+		Choices: []NoStreamChoice{
+			{
+				Index: 0,
+				Message: Message{
+					Role:    "assistant",
+					Content: text,
+				},
+				Logprobs:     nil,
+				FinishReason: "stop",
+			},
+		},
+	}
+
+	gc.JSON(200, openAIResp)
+	return nil
 }
