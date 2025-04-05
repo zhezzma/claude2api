@@ -117,7 +117,7 @@ export APIKEY=123
 | `NO_ROLE_PREFIX` | Do not add role in every message | `false` |
 | `PROMPT_DISABLE_ARTIFACTS` | Add Prompt try to disable Artifacts | `false` |
 | `ENABLE_MIRROR_API` | Enable direct use sk-ant-* as key | `false` |
-| `MIRROR_API_PREFIX` | Add Prefix to protect Mirror| `false` |
+| `MIRROR_API_PREFIX` | Add Prefix to protect Mirror，required when ENABLE_MIRROR_API is true | `` |
 
 
 ## 📝 API Usage

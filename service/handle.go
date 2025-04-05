@@ -4,6 +4,7 @@ import (
 	"claude2api/config"
 	"claude2api/core"
 	"claude2api/logger"
+	"claude2api/model"
 	"claude2api/utils"
 	"fmt"
 	"net/http"
@@ -12,13 +13,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
-
-type ChatCompletionRequest struct {
-	Model    string                   `json:"model"`
-	Messages []map[string]interface{} `json:"messages"`
-	Stream   bool                     `json:"stream"`
-	Tools    []map[string]interface{} `json:"tools,omitempty"`
-}
 
 type ErrorResponse struct {
 	Error string `json:"error"`
@@ -38,150 +32,47 @@ func ChatCompletionsHandler(c *gin.Context) {
 		MirrorChatHandler(c)
 		return
 	}
-	// Parse request body
-	var req ChatCompletionRequest
-	defaultStream := true
-	req = ChatCompletionRequest{
-		Stream: defaultStream,
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
+
+	// Parse and validate request
+	req, err := parseAndValidateRequest(c)
+	if err != nil {
 		c.JSON(http.StatusBadRequest, ErrorResponse{
 			Error: fmt.Sprintf("Invalid request: %v", err),
 		})
 		return
 	}
-	// logger.Info(fmt.Sprintf("Received request: %v", req))
-	// Validate request
-	if len(req.Messages) == 0 {
-		c.JSON(http.StatusBadRequest, ErrorResponse{
-			Error: "No messages provided",
-		})
-		return
-	}
+
+	// Process messages into prompt and extract images
+	processor := utils.NewChatRequestProcessor()
+	processor.ProcessMessages(req.Messages)
 
 	// Get model or use default
-	model := req.Model
-	if model == "" {
-		model = "claude-3-7-sonnet-20250219"
-	}
-	var prompt strings.Builder
-	if config.ConfigInstance.PromptDisableArtifacts {
-		prompt.WriteString("System: Forbidden to use <antArtifac> </antArtifac> to wrap code blocks, use markdown syntax instead, which means wrapping code blocks with ``` ```\n\n")
-	}
-	img_data_list := []string{}
-	// Format messages into a single prompt
-	for _, msg := range req.Messages {
-		role, roleOk := msg["role"].(string)
-		if !roleOk {
-			continue // 忽略无效格式
-		}
-
-		content, exists := msg["content"]
-		if !exists {
-			continue
-		}
-
-		prompt.WriteString(utils.GetRolePrefix(role)) // 获取角色前缀
-		switch v := content.(type) {
-		case string: // 如果 content 直接是 string
-			prompt.WriteString(v + "\n\n")
-		case []interface{}: // 如果 content 是 []interface{} 类型的数组
-			for _, item := range v {
-				if itemMap, ok := item.(map[string]interface{}); ok {
-					if itemType, ok := itemMap["type"].(string); ok {
-						if itemType == "text" {
-							if text, ok := itemMap["text"].(string); ok {
-								prompt.WriteString(text + "\n\n")
-							}
-						} else if itemType == "image_url" {
-							if imageUrl, ok := itemMap["image_url"].(map[string]interface{}); ok {
-								if url, ok := imageUrl["url"].(string); ok {
-									img_data_list = append(img_data_list, url) // 收集图片数据
-								}
-							}
-						}
-					}
-				}
-			}
-		}
-	}
-	fmt.Println(prompt.String())                 // 输出最终构造的内容
-	fmt.Println("img_data_list:", img_data_list) // 输出图片数据
-	// 切号重试机制
-	var claudeClient *core.Client
+	model := getModelOrDefault(req.Model)
+	index := config.Sr.NextIndex()
+	// Attempt with retry mechanism
 	for i := 0; i < config.ConfigInstance.RetryCount; i++ {
-		session, err := config.ConfigInstance.GetSessionForModel(model)
-		logger.Info(fmt.Sprintf("Using session for model %s: %s", model, session.SessionKey))
+		index = (index + 1) % len(config.ConfigInstance.Sessions)
+		session, err := config.ConfigInstance.GetSessionForModel(index)
 		if err != nil {
 			logger.Error(fmt.Sprintf("Failed to get session for model %s: %v", model, err))
 			logger.Info("Retrying another session")
 			continue
 		}
-		// Initialize the Claude client
-		claudeClient = core.NewClient(session.SessionKey, config.ConfigInstance.Proxy)
-		if session.OrgID == "" {
-			orgId, err := claudeClient.GetOrgID()
-			if err != nil {
-				logger.Error(fmt.Sprintf("Failed to get org ID: %v", err))
-				logger.Info("Retrying another session")
-				claudeClient = nil
-				continue
-			}
-			config.ConfigInstance.SetSessionOrgID(session.SessionKey, orgId)
-			session.OrgID = orgId
-			logger.Info(fmt.Sprintf("Set org ID for session %s: %s", session.SessionKey, orgId))
-		}
-		claudeClient.SetOrgID(session.OrgID)
-		if len(img_data_list) > 0 {
-			err := claudeClient.UploadFile(img_data_list)
-			if err != nil {
-				logger.Error(fmt.Sprintf("Failed to upload file: %v", err))
-				logger.Info("Retrying another session")
-				claudeClient = nil
-				continue
-			}
-		}
-		if prompt.Len() > config.ConfigInstance.MaxChatHistoryLength {
-			claudeClient.SetBigContext(prompt.String())
-			prompt.Reset()
-			if config.ConfigInstance.PromptDisableArtifacts {
-				prompt.WriteString("System: Forbidden to use <antArtifac> </antArtifac> to wrap code blocks, use markdown syntax instead, which means wrapping code blocks with ``` ```\n\n")
-			}
-			prompt.WriteString("You must immerse yourself in the role of assistant in context.txt, cannot respond as a user, cannot reply to this message, cannot mention this message, and ignore this message in your response.\n\n")
-			logger.Info(fmt.Sprintf("Prompt length exceeds max limit (%d), using file context", config.ConfigInstance.MaxChatHistoryLength))
-		}
-		// Create a new conversation
-		conversationID, err := claudeClient.CreateConversation(model)
-		if err != nil {
-			logger.Error(fmt.Sprintf("Failed to create conversation: %v", err))
-			logger.Info("Retrying another session")
-			claudeClient = nil
-			continue // Retry on error
-		}
-		if _, err := claudeClient.SendMessage(conversationID, prompt.String(), req.Stream, c); err != nil {
-			logger.Error(fmt.Sprintf("Failed to send message: %v", err))
-			logger.Info("Retrying another session")
-			claudeClient = nil
-			continue // Retry on error
-		}
-		if config.ConfigInstance.ChatDelete {
-			// Clean up the conversation
-			if err := claudeClient.DeleteConversation(conversationID); err != nil {
-				logger.Error(fmt.Sprintf("Failed to delete conversation: %v", err))
-				time.Sleep(1 * time.Second)
-				if err = claudeClient.DeleteConversation(conversationID); err != nil {
-					logger.Error(fmt.Sprintf("Two failed to delete conversation: %v", err))
-				} else {
-					logger.Info(fmt.Sprintf("conversation %s deleted successfully in two", conversationID))
-				}
-			} else {
-				logger.Info(fmt.Sprintf("conversation %s deleted successfully", conversationID))
-			}
-		}
-		claudeClient = nil
-		return
 
+		logger.Info(fmt.Sprintf("Using session for model %s: %s", model, session.SessionKey))
+		if i > 0 {
+			processor.Prompt.Reset()
+			processor.Prompt.WriteString(processor.RootPrompt.String())
+		}
+		// Initialize client and process request
+		if handleChatRequest(c, session, model, processor, req.Stream) {
+			return // Success, exit the retry loop
+		}
+
+		// If we're here, the request failed - retry with another session
+		logger.Info("Retrying another session")
 	}
+
 	logger.Error("Failed for all retries")
 	c.JSON(http.StatusInternalServerError, ErrorResponse{
 		Error: "Failed to process request after multiple attempts"})
@@ -204,150 +95,155 @@ func MirrorChatHandler(c *gin.Context) {
 		})
 		return
 	}
-	// Parse request body
-	var req ChatCompletionRequest
-	defaultStream := true
-	req = ChatCompletionRequest{
-		Stream: defaultStream,
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
+
+	// Parse and validate request
+	req, err := parseAndValidateRequest(c)
+	if err != nil {
 		c.JSON(http.StatusBadRequest, ErrorResponse{
 			Error: fmt.Sprintf("Invalid request: %v", err),
 		})
 		return
 	}
-	// logger.Info(fmt.Sprintf("Received request: %v", req))
-	// Validate request
-	if len(req.Messages) == 0 {
+
+	// Process messages into prompt and extract images
+	processor := utils.NewChatRequestProcessor()
+	processor.ProcessMessages(req.Messages)
+
+	// Get model or use default
+	model := getModelOrDefault(req.Model)
+
+	// Extract session info from auth header
+	session, err := extractSessionFromAuthHeader(c)
+	if err != nil {
 		c.JSON(http.StatusBadRequest, ErrorResponse{
-			Error: "No messages provided",
+			Error: fmt.Sprintf("Invalid authorization: %v", err),
 		})
 		return
 	}
 
-	// Get model or use default
-	model := req.Model
+	// Process the request with the provided session
+	if !handleChatRequest(c, session, model, processor, req.Stream) {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{
+			Error: "Failed to process request",
+		})
+		return
+	}
+}
+
+// Helper functions
+
+func parseAndValidateRequest(c *gin.Context) (*model.ChatCompletionRequest, error) {
+	var req model.ChatCompletionRequest
+	defaultStream := true
+	req = model.ChatCompletionRequest{
+		Stream: defaultStream,
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{
+			Error: fmt.Sprintf("Invalid request: %v", err),
+		})
+		return nil, err
+	}
+
+	if len(req.Messages) == 0 {
+		c.JSON(http.StatusBadRequest, ErrorResponse{
+			Error: "No messages provided",
+		})
+		return nil, fmt.Errorf("no messages provided")
+	}
+
+	return &req, nil
+}
+
+func getModelOrDefault(model string) string {
 	if model == "" {
-		model = "claude-3-7-sonnet-20250219"
+		return "claude-3-7-sonnet-20250219"
 	}
-	var prompt strings.Builder
-	if config.ConfigInstance.PromptDisableArtifacts {
-		prompt.WriteString("System: Forbidden to use <antArtifac> </antArtifac> to wrap code blocks, use markdown syntax instead, which means wrapping code blocks with ``` ```\n\n")
-	}
-	img_data_list := []string{}
-	// Format messages into a single prompt
-	for _, msg := range req.Messages {
-		role, roleOk := msg["role"].(string)
-		if !roleOk {
-			continue // 忽略无效格式
-		}
+	return model
+}
 
-		content, exists := msg["content"]
-		if !exists {
-			continue
-		}
-
-		prompt.WriteString(utils.GetRolePrefix(role)) // 获取角色前缀
-		switch v := content.(type) {
-		case string: // 如果 content 直接是 string
-			prompt.WriteString(v + "\n\n")
-		case []interface{}: // 如果 content 是 []interface{} 类型的数组
-			for _, item := range v {
-				if itemMap, ok := item.(map[string]interface{}); ok {
-					if itemType, ok := itemMap["type"].(string); ok {
-						if itemType == "text" {
-							if text, ok := itemMap["text"].(string); ok {
-								prompt.WriteString(text + "\n\n")
-							}
-						} else if itemType == "image_url" {
-							if imageUrl, ok := itemMap["image_url"].(map[string]interface{}); ok {
-								if url, ok := imageUrl["url"].(string); ok {
-									img_data_list = append(img_data_list, url) // 收集图片数据
-								}
-							}
-						}
-					}
-				}
-			}
-		}
-	}
-	fmt.Println(prompt.String())                 // 输出最终构造的内容
-	fmt.Println("img_data_list:", img_data_list) // 输出图片数据
-	var claudeClient *core.Client
-	var session *config.SessionInfo
+func extractSessionFromAuthHeader(c *gin.Context) (config.SessionInfo, error) {
 	authInfo := c.Request.Header.Get("Authorization")
 	authInfo = strings.TrimPrefix(authInfo, "Bearer ")
+
+	if authInfo == "" {
+		return config.SessionInfo{SessionKey: "", OrgID: ""}, fmt.Errorf("missing authorization header")
+	}
+
 	if strings.Contains(authInfo, ":") {
 		parts := strings.Split(authInfo, ":")
-		session = &config.SessionInfo{SessionKey: parts[0], OrgID: parts[1]}
-	} else {
-		session = &config.SessionInfo{SessionKey: authInfo, OrgID: ""}
+		return config.SessionInfo{SessionKey: parts[0], OrgID: parts[1]}, nil
 	}
-	logger.Info(fmt.Sprintf("Using session for model %s: %s", model, session.SessionKey))
+
+	return config.SessionInfo{SessionKey: authInfo, OrgID: ""}, nil
+}
+
+func handleChatRequest(c *gin.Context, session config.SessionInfo, model string, processor *utils.ChatRequestProcessor, stream bool) bool {
 	// Initialize the Claude client
-	claudeClient = core.NewClient(session.SessionKey, config.ConfigInstance.Proxy)
+	claudeClient := core.NewClient(session.SessionKey, config.ConfigInstance.Proxy)
+
+	// Get org ID if not already set
 	if session.OrgID == "" {
 		orgId, err := claudeClient.GetOrgID()
 		if err != nil {
 			logger.Error(fmt.Sprintf("Failed to get org ID: %v", err))
-			claudeClient = nil
-			c.JSON(http.StatusInternalServerError, ErrorResponse{
-				Error: "Failed to get org ID"})
-			return
+			return false
 		}
 		session.OrgID = orgId
-		logger.Info(fmt.Sprintf("Set org ID for session %s: %s", session.SessionKey, orgId))
+		config.ConfigInstance.SetSessionOrgID(session.SessionKey, session.OrgID)
 	}
+
 	claudeClient.SetOrgID(session.OrgID)
-	if len(img_data_list) > 0 {
-		err := claudeClient.UploadFile(img_data_list)
+
+	// Upload images if any
+	if len(processor.ImgDataList) > 0 {
+		err := claudeClient.UploadFile(processor.ImgDataList)
 		if err != nil {
 			logger.Error(fmt.Sprintf("Failed to upload file: %v", err))
-			claudeClient = nil
-			c.JSON(http.StatusInternalServerError, ErrorResponse{
-				Error: "Failed to upload file"})
-			return
+			return false
 		}
 	}
-	if prompt.Len() > config.ConfigInstance.MaxChatHistoryLength {
-		claudeClient.SetBigContext(prompt.String())
-		prompt.Reset()
-		if config.ConfigInstance.PromptDisableArtifacts {
-			prompt.WriteString("System: Forbidden to use <antArtifac> </antArtifac> to wrap code blocks, use markdown syntax instead, which means wrapping code blocks with ``` ```\n\n")
-		}
-		prompt.WriteString("You must immerse yourself in the role of assistant in context.txt, cannot respond as a user, cannot reply to this message, cannot mention this message, and ignore this message in your response.\n\n")
+
+	// Handle large context if needed
+	if processor.Prompt.Len() > config.ConfigInstance.MaxChatHistoryLength {
+		claudeClient.SetBigContext(processor.Prompt.String())
+		processor.ResetForBigContext()
 		logger.Info(fmt.Sprintf("Prompt length exceeds max limit (%d), using file context", config.ConfigInstance.MaxChatHistoryLength))
 	}
-	// Create a new conversation
+
+	// Create conversation
 	conversationID, err := claudeClient.CreateConversation(model)
 	if err != nil {
 		logger.Error(fmt.Sprintf("Failed to create conversation: %v", err))
-		claudeClient = nil
-		c.JSON(http.StatusInternalServerError, ErrorResponse{
-			Error: "Failed to create conversation"})
-		return
+		return false
 	}
-	if _, err := claudeClient.SendMessage(conversationID, prompt.String(), req.Stream, c); err != nil {
-		logger.Error(fmt.Sprintf("Failed to send message: %v", err))
-		claudeClient = nil
-		c.JSON(http.StatusInternalServerError, ErrorResponse{
-			Error: "Failed to send message"})
-		return
-	}
-	if config.ConfigInstance.ChatDelete {
-		// Clean up the conversation
-		if err := claudeClient.DeleteConversation(conversationID); err != nil {
-			logger.Error(fmt.Sprintf("Failed to delete conversation: %v", err))
-			time.Sleep(1 * time.Second)
-			if err = claudeClient.DeleteConversation(conversationID); err != nil {
-				logger.Error(fmt.Sprintf("Two failed to delete conversation: %v", err))
-			} else {
-				logger.Info(fmt.Sprintf("conversation %s deleted successfully in two", conversationID))
-			}
-		} else {
-			logger.Info(fmt.Sprintf("conversation %s deleted successfully", conversationID))
-		}
-	}
-	claudeClient = nil
 
+	// Send message
+	if _, err := claudeClient.SendMessage(conversationID, processor.Prompt.String(), stream, c); err != nil {
+		logger.Error(fmt.Sprintf("Failed to send message: %v", err))
+		go cleanupConversation(claudeClient, conversationID, 3)
+		return false
+	}
+
+	// Clean up conversation if enabled
+	if config.ConfigInstance.ChatDelete {
+		go cleanupConversation(claudeClient, conversationID, 3)
+	}
+
+	return true
+}
+
+func cleanupConversation(client *core.Client, conversationID string, retry int) {
+	for i := 0; i < retry; i++ {
+		if err := client.DeleteConversation(conversationID); err != nil {
+			logger.Error(fmt.Sprintf("Failed to delete conversation: %v", err))
+			time.Sleep(2 * time.Second)
+			continue
+		}
+		logger.Info(fmt.Sprintf("Successfully deleted conversation: %s", conversationID))
+		return // 成功后直接返回，不执行后面的错误日志
+	}
+	// 只有当所有重试都失败后，才会执行到这里
+	logger.Error(fmt.Sprintf("Cleanup %s conversation %s failed after %d retries", client.SessionKey, conversationID, retry))
 }
