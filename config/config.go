@@ -155,7 +155,7 @@ func init() {
 	}
 	ConfigInstance = LoadConfig()
 	logger.Info("Loaded config:")
-	logger.Info(fmt.Sprintf("Sessions count: %d", ConfigInstance.RetryCount))
+	logger.Info(fmt.Sprintf("Max Retry count: %d", ConfigInstance.RetryCount))
 	for _, session := range ConfigInstance.Sessions {
 		logger.Info(fmt.Sprintf("Session: %s, OrgID: %s", session.SessionKey, session.OrgID))
 	}
